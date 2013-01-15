@@ -14,6 +14,7 @@ namespace DoxyToEcma
 		Dictionary <string,XDocument> ecma_docs = new Dictionary<string, XDocument> ();
 		Dictionary <string,XDocument> doxy_docs = new Dictionary<string, XDocument> ();
 		Dictionary <string, string> ecma_full = new Dictionary<string, string> ();
+		Dictionary <string, string> ecma_path = new Dictionary<string, string> ();
 
 		public static void Main (string[] args)
 		{
@@ -35,6 +36,19 @@ namespace DoxyToEcma
 			LoadDoxyDocs (doxy);
 			LoadEcmaDocs (ecma);
 			MergeDocs ();
+			SaveEcmaDocs ();
+		}
+
+		void SaveEcmaDocs ()
+		{
+			foreach (var kv in ecma_docs) {
+				var settings = new XmlWriterSettings () {
+					Indent = true,
+					NewLineChars = "\n",
+				};
+				using (var output = XmlWriter.Create (ecma_path [kv.Key], settings))
+					kv.Value.Save (output);
+			}
 		}
 
 		void LoadEcmaDocs (string ecmaDir)
@@ -50,7 +64,9 @@ namespace DoxyToEcma
 				var ns = node.Parent.FirstAttribute.Value;
 				var tn = node.Attribute ("Name").Value;
 
-				ecma_docs [tn] = XDocument.Load (Path.Combine (ecmaDir, ns, tn + ".xml"));
+				var path = Path.Combine (ecmaDir, ns, tn + ".xml");
+				ecma_path [tn] = path;
+				ecma_docs [tn] = XDocument.Load (path);
 				ecma_full [tn] = ns + "." + tn;
 			}
 		}
