@@ -1,3 +1,18 @@
+// DoxyToEcma
+// 
+// Transforms Doxy XML documents to ECMA XML documents, by matching typenames
+// and Export attributes in MonoTouch bindings.
+//
+// Authors:
+//   Miguel de Icaza
+//
+// TODO:
+//    If briefdescription is present, use that for <summary> instead of
+//    the current setup that takes the first paragraph from the full detailed
+//    description as the summary.
+//
+//    Import enumerations
+//
 using System;
 using System.Linq;
 using System.Xml;
@@ -21,6 +36,12 @@ namespace DoxyToEcma
 			new Importer ().Run (args);
 		}
 
+		void Usage ()
+		{
+			Console.WriteLine ("usage is: DoxyToEcma ecma_dir doxy_xml_dir");
+
+		}
+
 		public void Run (string [] args)
 		{
 			string ecma, doxy;
@@ -29,8 +50,8 @@ namespace DoxyToEcma
 				ecma = args [0];
 				doxy = args [1];
 			} else {
-				ecma = "/cvs/monotouch-bindings/cocos2d/docs";
-				doxy = "/cvs/monotouch-bindings/cocos2d/binding/cocos2d-iphone-2.0/xml";
+				Usage ();
+				return;
 			}
 			Console.WriteLine ("Loading Doxy from {0}", doxy);
 			LoadDoxyDocs (doxy);
@@ -88,9 +109,19 @@ namespace DoxyToEcma
 			}
 		}
 
-		void TransformDoxy (XElement element)
+		//
+		// Transforms the detaileddescription section
+		// @element contains the XML fragment for the section
+		// 
+		// Returns the Tuple for a "parameterlist" and "parameterDescription" nodes, or null if not available.
+		//
+		Tuple<XElement,XElement> TransformDoxy (XElement element)
 		{
+			XElement pname;
+			Tuple<XElement,XElement> parameterList = null;
+
 			if (debug) Console.WriteLine ("BEFORE: " + element);
+			var removeList = new List<XElement> ();
 			foreach (var e in element.Descendants ()){
 				var s = e.Name.ToString ();
 				switch (s){
@@ -125,29 +156,38 @@ namespace DoxyToEcma
 					break;
 				case "para":
 					break;
+				case "parameterlist":
+					parameterList = new Tuple<XElement,XElement> (e.XPathSelectElement ("parameteritem/parameternamelist"), e.XPathSelectElement ("parameteritem/parameterdescription"));
+					removeList.Add (e); 
+					break;
 				default:
 					if (debug) Console.WriteLine ("Unhandled: " + s);
 					break;
 				}
 			}
+			if (removeList.Count > 0) {
+				foreach (var p in removeList)
+					p.Remove ();
+			}
+
 			if (debug)
 				Console.WriteLine ("\n\nAFTER: {0}\n\n\n\n", element);
+			Console.WriteLine ("ParList: {0}", parameterList);
+			return parameterList;
 		}
 
-		void Plug (XContainer target, string summaryPath, string remarksPath, XElement doxyDocs)
+		Tuple<XElement,XElement> Plug (XContainer target, string summaryPath, string remarksPath, XElement doxyDocs)
 		{
-			TransformDoxy (doxyDocs);
+			var ret = TransformDoxy (doxyDocs);
 			var elements = doxyDocs.Elements ();
 			var sum = target.XPathSelectElement (summaryPath);
 			var rem = target.XPathSelectElement (remarksPath);
 			var first = elements.FirstOrDefault ();
 			if (first != null){
-				if (sum == null)
-					Console.WriteLine ("Got: {0}", target);
-
 				sum.SetValue (first);
 				rem.SetValue (elements);
 			}
+			return ret;
 		}
 
 		void ImportDoxyDoc (XDocument ecmaDoc, XDocument doxyDoc)
@@ -159,8 +199,10 @@ namespace DoxyToEcma
 				Plug (ecmaDoc, "/Type/Docs/summary", "/Type/Docs/remarks", details);
 
 			// Bring property docs
+			Tuple<XElement,XElement> parameterList;
 
 			foreach (var property in doxyDoc.XPathSelectElements ("/doxygen/compounddef/sectiondef/memberdef[@kind='property']")){
+
 				var name = property.XPathSelectElement ("name").Value;
 				var detailed = property.XPathSelectElement ("detaileddescription");
 
@@ -168,15 +210,15 @@ namespace DoxyToEcma
 				if (debug)
 					Console.WriteLine ("Found Node: {0} {1}", name, ecmaNode != null);
 				if (ecmaNode == null){
-					Console.WriteLine ("Warning: not founs {0}", name);
+					Console.WriteLine ("Warning: not found {0}", name);
 					continue;
 				}
-				Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
+				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
 			}
 
-			foreach (var property in doxyDoc.XPathSelectElements ("/doxygen/compounddef/sectiondef/memberdef[@kind='function']")){
-				var name = property.XPathSelectElement ("name").Value;
-				var detailed = property.XPathSelectElement ("detaileddescription");
+			foreach (var method in doxyDoc.XPathSelectElements ("/doxygen/compounddef/sectiondef/memberdef[@kind='function']")){
+				var name = method.XPathSelectElement ("name").Value;
+				var detailed = method.XPathSelectElement ("detaileddescription");
 
 				var ecmaNode = ecmaDoc.XPathSelectElement ("/Type/Members/Member[Attributes/Attribute/AttributeName='MonoTouch.Foundation.Export(\"" + name +"\")']");
 				if (debug)
@@ -185,7 +227,25 @@ namespace DoxyToEcma
 					Console.WriteLine ("Warning: not founs {0}", name);
 					continue;
 				}
-				Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
+				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
+				Console.WriteLine ("Receiving: {0}", parameterList);
+				if (parameterList != null){
+					var names = parameterList.Item1.XPathSelectElements ("parametername");
+					var descs = parameterList.Item2.Descendants ();
+
+					var pairs = names.Zip (descs, (first, second) => Tuple.Create (first.Value, second));
+	
+					foreach (var parameter in pairs){
+						var exp = "Docs/param[@name='" + parameter.Item1 + "']";
+						Console.WriteLine ("tryig: {0}", exp);
+						var pnode = ecmaNode.XPathSelectElement (exp);
+						if (pnode != null){
+
+							TransformDoxy (parameter.Item2);
+							pnode.SetValue (parameter.Item2);
+						}
+					}
+				}
 			}
 
 			if (debug)
