@@ -105,7 +105,7 @@ namespace DoxyToEcma
 				}
 				debug = (type == "CCNode");
 					
-				ImportDoxyDoc (ecma, doxy);
+				ImportDoxyDoc (type, ecma, doxy);
 			}
 		}
 
@@ -172,7 +172,6 @@ namespace DoxyToEcma
 
 			if (debug)
 				Console.WriteLine ("\n\nAFTER: {0}\n\n\n\n", element);
-			Console.WriteLine ("ParList: {0}", parameterList);
 			return parameterList;
 		}
 
@@ -190,7 +189,7 @@ namespace DoxyToEcma
 			return ret;
 		}
 
-		void ImportDoxyDoc (XDocument ecmaDoc, XDocument doxyDoc)
+		void ImportDoxyDoc (string typeName, XDocument ecmaDoc, XDocument doxyDoc)
 		{
 
 			// Bring class details.
@@ -210,7 +209,7 @@ namespace DoxyToEcma
 				if (debug)
 					Console.WriteLine ("Found Node: {0} {1}", name, ecmaNode != null);
 				if (ecmaNode == null){
-					Console.WriteLine ("Warning: not found {0}", name);
+					Console.WriteLine ("Warning: did not find this selector {0} on the {1} type", name, typeName);
 					continue;
 				}
 				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
@@ -224,11 +223,10 @@ namespace DoxyToEcma
 				if (debug)
 					Console.WriteLine ("Found Node: {0} {1}", name, ecmaNode != null);
 				if (ecmaNode == null){
-					Console.WriteLine ("Warning: not founs {0}", name);
+					Console.WriteLine ("Warning: did not find this selector {0} on the {1} type", name, typeName);
 					continue;
 				}
 				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
-				Console.WriteLine ("Receiving: {0}", parameterList);
 				if (parameterList != null){
 					var names = parameterList.Item1.XPathSelectElements ("parametername");
 					var descs = parameterList.Item2.Descendants ();
@@ -237,7 +235,6 @@ namespace DoxyToEcma
 	
 					foreach (var parameter in pairs){
 						var exp = "Docs/param[@name='" + parameter.Item1 + "']";
-						Console.WriteLine ("tryig: {0}", exp);
 						var pnode = ecmaNode.XPathSelectElement (exp);
 						if (pnode != null){
 
