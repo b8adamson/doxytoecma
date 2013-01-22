@@ -118,7 +118,8 @@ namespace DoxyToEcma
 		//
 		// Transforms the detaileddescription section
 		// @element contains the XML fragment for the section
-		// 
+		// @replaceTextBooleans if set does a smple transformation of "YES"/"NO" to true false.
+		//
 		// Returns the Tuple for a "parameterlist" and "parameterDescription" nodes, or null if not available.
 		//
 		IEnumerable<XElement> TransformDoxy (XElement element, bool replaceTextBooleans = false)
@@ -179,27 +180,46 @@ namespace DoxyToEcma
 					p.Remove ();
 			}
 
+			// Remove the wrapping <simplesect>s
 			element.Descendants ("simplesect").ToList ().ForEach (e => {
 				e.Elements ().ToList ().ForEach (f => e.Parent.Add (f));
 				e.Remove ();
 			});
+
+
 
 			if (debug)
 				Console.WriteLine ("\n\nAFTER: {0}\n\n\n\n", element);
 			return parameterList;
 		}
 
-		IEnumerable<XElement> Plug (XContainer target, string summaryPath, string remarksPath, XElement doxyDocs)
+		//
+		// Plugs Doxy docs into ECMA XML docs.   If the brief data is available,
+		// it uses that.   Otherwise it picks the first node from the detailed description.
+		// 
+		// @target is an ECMA XML document to plug data into
+		// @summaryPath is the xpath expression to fetch the summary node
+		// @remarksPath is the xpath expression to fetch the remarks node
+		// @brief is the Doxy Brief description node
+		// @detailed is the Doxy detailed description
+		//
+		IEnumerable<XElement> Plug (XContainer target, string summaryPath, string remarksPath, XElement brief, XElement detailed)
 		{
-			var ret = TransformDoxy (doxyDocs);
-			var elements = doxyDocs.Elements ();
+			var ret = TransformDoxy (detailed);
+			TransformDoxy (brief);
+			var elements = detailed.Elements ();
 			var sum = target.XPathSelectElement (summaryPath);
 			var rem = target.XPathSelectElement (remarksPath);
-			var first = elements.FirstOrDefault ();
-			if (first != null){
-				sum.SetValue (first);
-				rem.SetValue (elements);
+
+			if (brief.Value.ToString ().Trim () != "")
+				sum.SetValue (brief.Elements ());
+			else {
+				var first = elements.FirstOrDefault ();
+				if (first != null) {
+					sum.SetValue (first);
+				}
 			}
+			rem.SetValue (elements);
 			return ret;
 		}
 
@@ -207,9 +227,10 @@ namespace DoxyToEcma
 		{
 
 			// Bring class details.
-			var details = doxyDoc.XPathSelectElement ("/doxygen/compounddef/detaileddescription");
-			if (details != null)
-				Plug (ecmaDoc, "/Type/Docs/summary", "/Type/Docs/remarks", details);
+			var detailed = doxyDoc.XPathSelectElement ("/doxygen/compounddef/detaileddescription");
+			var brief = doxyDoc.XPathSelectElement ("/doxygen/compounddef/briefdescription");
+			if (detailed != null)
+				Plug (ecmaDoc, "/Type/Docs/summary", "/Type/Docs/remarks", brief, detailed);
 
 			// Bring property docs
 			IEnumerable<XElement> parameterList;
@@ -217,7 +238,8 @@ namespace DoxyToEcma
 			foreach (var property in doxyDoc.XPathSelectElements ("/doxygen/compounddef/sectiondef/memberdef[@kind='property']")){
 
 				var name = property.XPathSelectElement ("name").Value;
-				var detailed = property.XPathSelectElement ("detaileddescription");
+				detailed = property.XPathSelectElement ("detaileddescription");
+				brief = property.XPathSelectElement ("briefdescription");
 
 				var ecmaNode = ecmaDoc.XPathSelectElement ("/Type/Members/Member[Attributes/Attribute/AttributeName='get: MonoTouch.Foundation.Export(\"" + name +"\")']");
 				if (debug)
@@ -226,12 +248,15 @@ namespace DoxyToEcma
 					Console.WriteLine ("Warning: did not find this selector (property) {0} on the {1} type", name, typeName);
 					continue;
 				}
-				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
+				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", brief, detailed);
 			}
 
+			// Bring methods docs
+			// When binding, sometimes we turn methods into properties, handle that too.
 			foreach (var method in doxyDoc.XPathSelectElements ("/doxygen/compounddef/sectiondef/memberdef[@kind='function']")){
 				var name = method.XPathSelectElement ("name").Value;
-				var detailed = method.XPathSelectElement ("detaileddescription");
+				detailed = method.XPathSelectElement ("detaileddescription");
+				brief = method.XPathSelectElement ("briefdescription");
 
 				var ecmaNode = ecmaDoc.XPathSelectElement ("/Type/Members/Member[Attributes/Attribute/AttributeName='MonoTouch.Foundation.Export(\"" + name +"\")']");
 				if (debug)
@@ -244,7 +269,7 @@ namespace DoxyToEcma
 						continue;
 					}
 				}
-				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
+				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", brief, detailed);
 				if (parameterList != null){
 
 					var ecmaPars = ecmaNode.XPathSelectElements ("Docs/param");
