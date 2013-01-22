@@ -109,16 +109,21 @@ namespace DoxyToEcma
 			}
 		}
 
+		void ReplaceBooleans (XElement e)
+		{
+			var val = e.Value;
+			e.SetValue (val.Replace ("YES", "true").Replace ("NO", "false"));
+		}
+
 		//
 		// Transforms the detaileddescription section
 		// @element contains the XML fragment for the section
 		// 
 		// Returns the Tuple for a "parameterlist" and "parameterDescription" nodes, or null if not available.
 		//
-		Tuple<XElement,XElement> TransformDoxy (XElement element)
+		IEnumerable<XElement> TransformDoxy (XElement element, bool replaceTextBooleans = false)
 		{
-			XElement pname;
-			Tuple<XElement,XElement> parameterList = null;
+			IEnumerable<XElement> parameterList = null;
 
 			if (debug) Console.WriteLine ("BEFORE: " + element);
 			var removeList = new List<XElement> ();
@@ -155,12 +160,16 @@ namespace DoxyToEcma
 					e.ReplaceWith (new XElement ("item", new XElement ("description", e.Value)));
 					break;
 				case "para":
+					if (replaceTextBooleans)
+						ReplaceBooleans (e);
 					break;
 				case "parameterlist":
-					parameterList = new Tuple<XElement,XElement> (e.XPathSelectElement ("parameteritem/parameternamelist"), e.XPathSelectElement ("parameteritem/parameterdescription"));
+					parameterList = e.XPathSelectElements ("parameteritem/parameterdescription");
 					removeList.Add (e); 
 					break;
 				default:
+					if (replaceTextBooleans)
+						ReplaceBooleans (e);
 					if (debug) Console.WriteLine ("Unhandled: " + s);
 					break;
 				}
@@ -170,12 +179,17 @@ namespace DoxyToEcma
 					p.Remove ();
 			}
 
+			element.Descendants ("simplesect").ToList ().ForEach (e => {
+				e.Elements ().ToList ().ForEach (f => e.Parent.Add (f));
+				e.Remove ();
+			});
+
 			if (debug)
 				Console.WriteLine ("\n\nAFTER: {0}\n\n\n\n", element);
 			return parameterList;
 		}
 
-		Tuple<XElement,XElement> Plug (XContainer target, string summaryPath, string remarksPath, XElement doxyDocs)
+		IEnumerable<XElement> Plug (XContainer target, string summaryPath, string remarksPath, XElement doxyDocs)
 		{
 			var ret = TransformDoxy (doxyDocs);
 			var elements = doxyDocs.Elements ();
@@ -198,7 +212,7 @@ namespace DoxyToEcma
 				Plug (ecmaDoc, "/Type/Docs/summary", "/Type/Docs/remarks", details);
 
 			// Bring property docs
-			Tuple<XElement,XElement> parameterList;
+			IEnumerable<XElement> parameterList;
 
 			foreach (var property in doxyDoc.XPathSelectElements ("/doxygen/compounddef/sectiondef/memberdef[@kind='property']")){
 
@@ -209,7 +223,7 @@ namespace DoxyToEcma
 				if (debug)
 					Console.WriteLine ("Found Node: {0} {1}", name, ecmaNode != null);
 				if (ecmaNode == null){
-					Console.WriteLine ("Warning: did not find this selector {0} on the {1} type", name, typeName);
+					Console.WriteLine ("Warning: did not find this selector (property) {0} on the {1} type", name, typeName);
 					continue;
 				}
 				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
@@ -223,25 +237,26 @@ namespace DoxyToEcma
 				if (debug)
 					Console.WriteLine ("Found Node: {0} {1}", name, ecmaNode != null);
 				if (ecmaNode == null){
-					Console.WriteLine ("Warning: did not find this selector {0} on the {1} type", name, typeName);
-					continue;
+					// Perhaps we turned this into a property
+					ecmaNode = ecmaDoc.XPathSelectElement ("/Type/Members/Member[Attributes/Attribute/AttributeName='get: MonoTouch.Foundation.Export(\"" + name +"\")']");
+					if (ecmaNode == null){
+						Console.WriteLine ("Warning: did not find this selector (function) {0} on the {1} type as either a property or method", name, typeName);
+						continue;
+					}
 				}
 				parameterList = Plug (ecmaNode, "Docs/summary", "Docs/remarks", detailed);
 				if (parameterList != null){
-					var names = parameterList.Item1.XPathSelectElements ("parametername");
-					var descs = parameterList.Item2.Descendants ();
 
-					var pairs = names.Zip (descs, (first, second) => Tuple.Create (first.Value, second));
-	
-					foreach (var parameter in pairs){
-						var exp = "Docs/param[@name='" + parameter.Item1 + "']";
-						var pnode = ecmaNode.XPathSelectElement (exp);
-						if (pnode != null){
+					var ecmaPars = ecmaNode.XPathSelectElements ("Docs/param");
+					var pairs = parameterList.Zip (ecmaPars, (XElement doxy, XElement ecma) => {
+						// Get the parameter name, if it is boolean, replace YES and NO with true and false.
 
-							TransformDoxy (parameter.Item2);
-							pnode.SetValue (parameter.Item2);
-						}
-					}
+						var n = ecmaNode.XPathSelectElement ("Parameters/Parameter[@Name='" + ecma.Attribute ("name").Value + "']");
+						var isBool = n.Attribute ("Type").Value == "System.Boolean";
+						TransformDoxy (doxy, isBool);
+						ecma.SetValue (doxy.Value);
+                       return 1;
+					}).ToList ();
 				}
 			}
 
